@@ -31,6 +31,19 @@ def _capitalize_first(text: str) -> str:
 
 _FILLER_RE = re.compile(r"\b(?:um+|uh+|erm+)\b[,.]?\s*", re.IGNORECASE)
 
+# Whisper decoder repetition loops: the same word or short phrase emitted
+# over and over ("synergy synergy synergy ..."). Three consecutive repeats of
+# a 1-3 word unit never occurs in real dictation — collapse to one.
+_REPEAT_RE = re.compile(r"\b(\w+(?:\s+\w+){0,2})(?:[\s,]+\1\b){2,}", re.IGNORECASE)
+
+
+def _collapse_repeats(text: str) -> str:
+    while True:
+        collapsed = _REPEAT_RE.sub(r"\1", text)
+        if collapsed == text:
+            return text
+        text = collapsed
+
 
 def _strip_fillers(text: str) -> str:
     """Cheap filler removal so short utterances that skip the LLM pass still
@@ -41,6 +54,7 @@ def _strip_fillers(text: str) -> str:
 STEPS: list[Processor] = [
     _strip_fillers,
     _collapse_whitespace,
+    _collapse_repeats,
     _strip,
     _capitalize_first,
 ]
