@@ -58,6 +58,13 @@ jobs:
             -ArgumentList '/silent','verbose','/in','ahk\WhisperPTT.ahk','/out','dist\WhisperPTT.exe','/base','ahk-bin\AutoHotkey64.exe'
           if (-not (Test-Path dist\WhisperPTT.exe)) { throw 'Ahk2Exe produced no output' }
 
+      - name: Build companion app
+        run: >
+          dotnet publish dotnet/WhisperPTT.Companion/WhisperPTT.Companion.csproj
+          -c Release -r win-x64 --self-contained true
+          -p:Version=${{ steps.ver.outputs.version }}
+          -o dist/companion
+
       - name: Build installer
         uses: Minionguyjpro/Inno-Setup-Action@v1.2.5
         with:
