@@ -108,7 +108,11 @@ class _State:
 def _partial_worker(state: _State, stop_evt: threading.Event) -> None:
     sample_rate = state.settings.sample_rate
     last_n = 0
-    while not stop_evt.wait(PARTIAL_INTERVAL):
+    last_pass_s = 0.0
+    # Pace to the model's real speed: sleeping at least as long as the last
+    # pass took caps the NPU duty cycle near 50% while recording, so heavy
+    # models (medium/distil) don't peg it at 100%. Fast models are unaffected.
+    while not stop_evt.wait(max(PARTIAL_INTERVAL, last_pass_s)):
         recorder = state.recorder
         if recorder is None or not recorder.recording:
             break
@@ -116,15 +120,17 @@ def _partial_worker(state: _State, stop_evt: threading.Event) -> None:
         if (len(audio) - last_n) / sample_rate < PARTIAL_MIN_NEW_S:
             continue
         try:
+            t0 = time.perf_counter()
             with state.asr_lock:
                 if stop_evt.is_set():  # /stop won the lock race — its job now
                     break
                 text = state.transcriber.transcribe(audio)
+            last_pass_s = time.perf_counter() - t0
             state.partial = (len(audio), text)
             last_n = len(audio)
             state.logger.debug(
-                "live: %.1fs transcribed in background -> %d chars",
-                len(audio) / sample_rate, len(text),
+                "live: %.1fs transcribed in background in %.2fs -> %d chars",
+                len(audio) / sample_rate, last_pass_s, len(text),
             )
         except Exception:
             state.logger.exception("live transcription pass failed")
