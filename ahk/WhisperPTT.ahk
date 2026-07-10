@@ -246,7 +246,7 @@ HideIndicator() {
 ; with capsule bars that move with the actual mic level (GET /level) while
 ; recording, and settle into a gentle cool-toned idle wave while the LLM
 ; works. GDI+ layered window: per-pixel alpha, no chrome, never activates.
-global Wave := {hwnd: 0, gui: 0, w: 168, h: 34, mode: "", level: 0.0, smooth: 0.0, t: 0.0,
+global Wave := {hwnd: 0, gui: 0, w: 84, h: 30, mode: "", level: 0.0, smooth: 0.0, t: 0.0,
     hdc: 0, hbm: 0, obm: 0, gfx: 0, token: 0}
 
 WaveShow(mode) {
@@ -310,9 +310,10 @@ WaveFrame() {
         catch
             Wave.level := 0.0
     }
-    ; Map mic RMS to 0..1 (speech on this mic peaks ~0.02); idle wave for LLM.
-    target := (Wave.mode = "rec") ? Min(1.0, Wave.level / 0.02) : 0.30
-    Wave.smooth += (target - Wave.smooth) * 0.30
+    ; Map mic RMS to 0..1 — divisor tuned so normal speech on this mic hits
+    ; the upper range (measured speech rms ~0.008-0.014); idle wave otherwise.
+    target := (Wave.mode = "rec") ? Min(1.0, Wave.level / 0.011) : 0.30
+    Wave.smooth += (target - Wave.smooth) * 0.40
     WaveDraw()
 }
 
@@ -321,21 +322,22 @@ WaveDraw() {
     gfx := Wave.gfx
     DllCall("gdiplus\GdipGraphicsClear", "Ptr", gfx, "UInt", 0x00000000)
     WaveRoundFill(gfx, 0, 0, Wave.w, Wave.h, Wave.h / 2, 0xB414141A)  ; translucent dark pill
-    barCount := 9
-    barW := 4.0
-    gap := 8.0
+    barCount := 5
+    barW := 3.5
+    gap := 6.0
     span := barCount * barW + (barCount - 1) * gap
     x0 := (Wave.w - span) / 2
     cy := Wave.h / 2
-    maxH := Wave.h - 12
+    maxH := Wave.h - 6
     color := (Wave.mode = "rec") ? 0xFFFF7A66 : 0xFF9AA8FF  ; warm coral / cool idle
     loop barCount {
         i := A_Index - 1
-        ; two incommensurate sines per bar -> organic, non-repeating motion
-        ph := Wave.t * 6.5 + i * 0.85
-        pulse := (Sin(ph) + Sin(ph * 0.57 + 1.9)) * 0.25 + 0.5
-        h := 4 + (maxH - 4) * pulse * Wave.smooth
-        h := Min(maxH, Max(4, h))
+        ; two incommensurate sines per bar -> organic, non-repeating motion.
+        ; pulse spans ~0.15-1.0 so bars travel most of the pill height.
+        ph := Wave.t * 7.5 + i * 1.1
+        pulse := 0.15 + 0.85 * ((Sin(ph) + Sin(ph * 0.57 + 1.9)) * 0.25 + 0.5)
+        h := 3 + (maxH - 3) * pulse * Wave.smooth
+        h := Min(maxH, Max(3, h))
         WaveRoundFill(gfx, x0 + i * (barW + gap), cy - h / 2, barW, h, barW / 2, color)
     }
     ; present via UpdateLayeredWindow (per-pixel alpha)

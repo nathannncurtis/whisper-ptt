@@ -62,7 +62,7 @@ pre-converted IR (`OpenVINO/whisper-base-fp16-ov`) over plain HTTP.
 | hotkey.key       | `RCtrl`              | any AHK v2 key name                       |
 | model.id         | `openai/whisper-base`| swap to `-small`/`-medium`, re-fetch      |
 | devices.order    | `NPU, CPU, GPU`      | first device that loads+warms up wins     |
-| cleanup.enabled  | `true`               | LLM cleanup pass on/off                   |
+| cleanup.enabled  | `false`              | LLM cleanup pass (off: NPU LLM inference not worth it yet) |
 | cleanup.id       | `OpenVINO/Phi-3.5-mini-instruct-int4-cw-ov` | needs channel-wise int4 for NPU |
 | cleanup.order    | `NPU, CPU`           | device order for the cleanup model only   |
 | media.pause_on_record | `true`          | pause playing media while recording, resume after |

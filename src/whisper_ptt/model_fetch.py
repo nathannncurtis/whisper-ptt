@@ -32,6 +32,20 @@ def _snapshot(repo: str, dest: Path, logger: logging.Logger) -> None:
     snapshot_download(repo_id=repo, local_dir=dest)
 
 
+def _preconverted_repo(model_id: str) -> str | None:
+    """Map a source model id to its pre-converted fp16 IR repo, if one exists.
+    openai/whisper-small.en      -> OpenVINO/whisper-small.en-fp16-ov
+    distil-whisper/distil-large-v3 -> OpenVINO/distil-whisper-large-v3-fp16-ov
+    """
+    if model_id.startswith("openai/whisper-"):
+        size = model_id.removeprefix("openai/whisper-")
+        return f"OpenVINO/whisper-{size}-fp16-ov"
+    if model_id.startswith("distil-whisper/distil-"):
+        name = model_id.removeprefix("distil-whisper/distil-")
+        return f"OpenVINO/distil-whisper-{name}-fp16-ov"
+    return None
+
+
 def fetch(settings: Settings, logger: logging.Logger) -> Path:
     dest = settings.model_dir
     if is_present(dest):
@@ -39,10 +53,9 @@ def fetch(settings: Settings, logger: logging.Logger) -> Path:
         return dest
 
     model_id = settings.model_id
+    repo = _preconverted_repo(model_id)
 
-    if model_id.startswith("openai/whisper-"):
-        size = model_id.removeprefix("openai/whisper-")
-        repo = f"OpenVINO/whisper-{size}-fp16-ov"
+    if repo is not None:
         try:
             _snapshot(repo, dest, logger)
             if is_present(dest):
