@@ -26,8 +26,13 @@ status codes). Endpoints: `POST /start`, `POST /stop` (returns the text),
 `503` while the model loads).
 
 Post-processing is an ordered pipeline in `src/whisper_ptt/postprocess.py`
-(currently trim + capitalize); an LLM cleanup pass can be appended later
-without touching anything else.
+(trim + capitalize), plus an optional **LLM cleanup pass**
+(`src/whisper_ptt/cleanup.py`): Phi-3.5-mini INT4 channel-wise on the NPU
+fixes punctuation/casing and drops filler words. It is best-effort — any
+failure falls back to the uncleaned text, and if the model can't load the
+backend still comes up without it. NPU note: LLMs only run there with INT4
+*symmetric channel-wise* weights; the OpenVINO org `*-int4-cw-ov` repos are
+pre-quantized that way (plain int4/int8 exports won't load).
 
 ## Setup (dev machine)
 
@@ -57,6 +62,11 @@ pre-converted IR (`OpenVINO/whisper-base-fp16-ov`) over plain HTTP.
 | hotkey.key       | `RCtrl`              | any AHK v2 key name                       |
 | model.id         | `openai/whisper-base`| swap to `-small`/`-medium`, re-fetch      |
 | devices.order    | `NPU, CPU, GPU`      | first device that loads+warms up wins     |
+| cleanup.enabled  | `true`               | LLM cleanup pass on/off                   |
+| cleanup.id       | `OpenVINO/Phi-3.5-mini-instruct-int4-cw-ov` | needs channel-wise int4 for NPU |
+| cleanup.order    | `NPU, CPU`           | device order for the cleanup model only   |
+| media.pause_on_record | `true`          | pause playing media while recording, resume after |
+| audio.silence_rms | `0.003`             | noise gate: min 95th-pct window RMS (see config comments) |
 | audio.mic_index  | `default`            | list with `python -m sounddevice`         |
 | server.port      | `8765`               |                                           |
 | logging.level    | `INFO`               | logs rotate in `logs\backend.log`         |

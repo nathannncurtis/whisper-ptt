@@ -12,6 +12,7 @@ dependencies = [
     "sounddevice>=0.4.6",
     "numpy",
     "huggingface_hub",
+    "winsdk",
 ]
 
 [project.scripts]

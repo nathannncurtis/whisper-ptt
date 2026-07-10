@@ -4,3 +4,4 @@ openvino-genai>=2025.2
 sounddevice>=0.4.6
 numpy
 huggingface_hub
+winsdk

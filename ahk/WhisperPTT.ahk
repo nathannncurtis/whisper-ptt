@@ -22,8 +22,7 @@ if !FileExist(Ini) {
 }
 
 HotkeyName := IniRead(Ini, "hotkey", "key", "RCtrl")
-BaseUrl := "http://" IniRead(Ini, "server", "host", "127.0.0.1")
-    ":" IniRead(Ini, "server", "port", "8765")
+BaseUrl := "http://" IniRead(Ini, "server", "host", "127.0.0.1") ":" IniRead(Ini, "server", "port", "8765")
 BackendCmd := IniRead(Ini, "backend", "command", "auto")
 LogDir := Root "\" IniRead(Ini, "logging", "dir", "logs")
 
@@ -80,6 +79,8 @@ StopDictation(*) {
     HideIndicator()
     if (text != "")
         SendText text
+    else
+        Flash("WhisperPTT: nothing heard (discarded as silence — see logs)")
 }
 
 ; ---------- backend lifecycle ----------
@@ -118,8 +119,7 @@ ResolveBackendCmd() {
     pyw := Root "\.venv\Scripts\pythonw.exe"
     if FileExist(pyw)
         return '"' pyw '" -m whisper_ptt'
-    MsgBox "No backend found.`nExpected " exe "`nor " pyw " (create the venv first).",
-        "WhisperPTT", "Iconx"
+    MsgBox "No backend found.`nExpected " exe "`nor " pyw " (create the venv first).", "WhisperPTT", "Iconx"
     ExitApp
 }
 

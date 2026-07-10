@@ -27,6 +27,8 @@ def main(argv: list[str] | None = None) -> int:
         from . import model_fetch
 
         model_fetch.fetch(settings, logger)
+        if settings.cleanup_enabled:
+            model_fetch.fetch_cleanup(settings, logger)
         return 0
 
     from . import server
