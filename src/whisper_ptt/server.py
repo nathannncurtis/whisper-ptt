@@ -253,14 +253,24 @@ def _make_handler(state: _State, server_ref: dict):
             t0 = time.perf_counter()
             with state.asr_lock:  # waits out any in-flight background pass
                 n_cached, cached = state.partial
-                tail_s = (len(audio) - n_cached) / state.settings.sample_rate
-                if cached and tail_s <= PARTIAL_REUSE_TAIL_S:
-                    state.logger.info("live transcript reused (tail=%.2fs)", tail_s)
+                tail = audio[n_cached:]
+                tail_s = len(tail) / state.settings.sample_rate
+                # A long tail that is just the user holding the key in silence
+                # adds no words — the cached transcript is complete. Only a
+                # tail with speech energy forces a full re-transcribe.
+                tail_peak = _speech_stats(tail, state.settings.sample_rate)[1]
+                tail_silent = tail_peak < max(state.settings.silence_rms, 3 * floor)
+                if cached and (tail_s <= PARTIAL_REUSE_TAIL_S or tail_silent):
+                    state.logger.info(
+                        "live transcript reused (tail=%.2fs, tail_peak=%.4f)",
+                        tail_s, tail_peak,
+                    )
                     raw = cached
                 else:
                     if n_cached:
                         state.logger.info(
-                            "live transcript stale (tail=%.2fs), full pass", tail_s
+                            "live transcript stale (tail=%.2fs, tail_peak=%.4f), full pass",
+                            tail_s, tail_peak,
                         )
                     raw = state.transcriber.transcribe(audio)
             whisper_s = time.perf_counter() - t0
