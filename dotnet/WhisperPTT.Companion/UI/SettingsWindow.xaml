@@ -1,0 +1,101 @@
+<ui:FluentWindow x:Class="WhisperPTT.Companion.UI.SettingsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+        Title="WhisperPTT Settings"
+        Width="560" Height="640" ResizeMode="NoResize"
+        WindowStartupLocation="CenterScreen"
+        ExtendsContentIntoTitleBar="True" WindowBackdropType="Mica"
+        WindowCornerPreference="Round"
+        FontFamily="{DynamicResource ContentControlThemeFontFamily}">
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+        <ui:TitleBar Grid.Row="0" Title="WhisperPTT Settings" ShowMinimize="False" ShowMaximize="False" />
+
+        <ScrollViewer Grid.Row="1" Padding="18,10,18,0" VerticalScrollBarVisibility="Auto">
+            <StackPanel>
+                <ui:InfoBar x:Name="SavedBar" IsOpen="False" IsClosable="True" Severity="Success"
+                            Title="Saved" Message="Restart the backend for changes to take effect."
+                            Margin="0,0,0,14" />
+
+                <ui:Card Padding="16">
+                    <StackPanel>
+                        <ui:TextBlock Appearance="Secondary" FontTypography="Caption" Text="HOTKEY" Margin="0,0,0,8" />
+                        <ui:TextBox x:Name="HotkeyBox" PlaceholderText="RCtrl" />
+                        <ui:TextBlock Appearance="Secondary" Margin="0,6,0,0"
+                                      Text="AutoHotkey v2 key name: RCtrl, RAlt, F13, CapsLock…" />
+                    </StackPanel>
+                </ui:Card>
+
+                <ui:Card Padding="16" Margin="0,14,0,0">
+                    <StackPanel>
+                        <ui:TextBlock Appearance="Secondary" FontTypography="Caption" Text="MODEL" Margin="0,0,0,8" />
+                        <ComboBox x:Name="ModelBox" IsEditable="True" />
+                        <ui:TextBlock Appearance="Secondary" Margin="0,6,0,0"
+                                      Text="Downloaded automatically on next backend start if missing." />
+                    </StackPanel>
+                </ui:Card>
+
+                <ui:Card Padding="16" Margin="0,14,0,0">
+                    <StackPanel>
+                        <ui:TextBlock Appearance="Secondary" FontTypography="Caption" Text="AUDIO" Margin="0,0,0,8" />
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="170" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+                            <ui:TextBlock Grid.Row="0" Grid.Column="0" Appearance="Secondary" Text="Microphone index" VerticalAlignment="Center" />
+                            <ui:TextBox Grid.Row="0" Grid.Column="1" x:Name="MicBox" PlaceholderText="default" />
+                            <ui:TextBlock Grid.Row="1" Grid.Column="0" Appearance="Secondary" Text="Silence gate (RMS)" VerticalAlignment="Center" Margin="0,8,0,0" />
+                            <ui:TextBox Grid.Row="1" Grid.Column="1" x:Name="GateBox" Margin="0,8,0,0" />
+                        </Grid>
+                    </StackPanel>
+                </ui:Card>
+
+                <ui:Card Padding="16" Margin="0,14,0,0">
+                    <StackPanel>
+                        <ui:TextBlock Appearance="Secondary" FontTypography="Caption" Text="MEDIA" Margin="0,0,0,8" />
+                        <CheckBox x:Name="PauseMediaCheck" Content="Pause playing media while recording" />
+                    </StackPanel>
+                </ui:Card>
+
+                <ui:Card Padding="16" Margin="0,14,0,0">
+                    <StackPanel>
+                        <ui:TextBlock Appearance="Secondary" FontTypography="Caption" Text="LLM CLEANUP (EXPERIMENTAL)" Margin="0,0,0,8" />
+                        <CheckBox x:Name="CleanupCheck" Content="Enable LLM cleanup pass" />
+                        <Grid Margin="0,8,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="170" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+                            <ui:TextBlock Grid.Row="0" Grid.Column="0" Appearance="Secondary" Text="Model id" VerticalAlignment="Center" />
+                            <ui:TextBox Grid.Row="0" Grid.Column="1" x:Name="CleanupModelBox" />
+                            <ui:TextBlock Grid.Row="1" Grid.Column="0" Appearance="Secondary" Text="Skip under (words)" VerticalAlignment="Center" Margin="0,8,0,0" />
+                            <ui:TextBox Grid.Row="1" Grid.Column="1" x:Name="MinWordsBox" Margin="0,8,0,0" />
+                        </Grid>
+                    </StackPanel>
+                </ui:Card>
+            </StackPanel>
+        </ScrollViewer>
+
+        <Grid Grid.Row="2" Margin="18,14,18,18">
+            <ui:Button Content="Restart backend" Click="OnRestartBackend" HorizontalAlignment="Left" />
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                <ui:Button Content="Cancel" Click="OnCancel" />
+                <ui:Button Content="Save" Appearance="Primary" Margin="8,0,0,0" Click="OnSave" />
+            </StackPanel>
+        </Grid>
+    </Grid>
+</ui:FluentWindow>
