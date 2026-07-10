@@ -1,0 +1,78 @@
+name: release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Resolve version
+        id: ver
+        shell: pwsh
+        run: |
+          $v = if ($env:GITHUB_REF_NAME -match '^v(.+)$') { $Matches[1] } else { '0.0.0' }
+          "version=$v" >> $env:GITHUB_OUTPUT
+
+      - name: Install backend dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install -e .
+          pip install pyinstaller
+
+      - name: Build backend with PyInstaller
+        run: >
+          pyinstaller --noconfirm --clean --noconsole
+          --name whisper-ptt-backend
+          --collect-all openvino
+          --collect-all openvino_genai
+          --collect-all openvino_tokenizers
+          --collect-all sounddevice
+          installer/backend_entry.py
+
+      - name: Compile AHK front-end with Ahk2Exe
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $hdr = @{ 'User-Agent' = 'whisper-ptt-ci' }
+          $ahk = Invoke-RestMethod -Headers $hdr 'https://api.github.com/repos/AutoHotkey/AutoHotkey/releases/latest'
+          $zip = ($ahk.assets | Where-Object name -match '^AutoHotkey_[\d.]+\.zip$' | Select-Object -First 1).browser_download_url
+          Invoke-WebRequest $zip -OutFile ahk.zip
+          Expand-Archive ahk.zip -DestinationPath ahk-bin
+          $a2e = Invoke-RestMethod -Headers $hdr 'https://api.github.com/repos/AutoHotkey/Ahk2Exe/releases/latest'
+          $zip2 = ($a2e.assets | Where-Object name -match '\.zip$' | Select-Object -First 1).browser_download_url
+          Invoke-WebRequest $zip2 -OutFile a2e.zip
+          Expand-Archive a2e.zip -DestinationPath a2e
+          Start-Process -Wait -FilePath (Get-ChildItem a2e -Recurse -Filter Ahk2Exe.exe | Select-Object -First 1).FullName `
+            -ArgumentList '/silent','verbose','/in','ahk\WhisperPTT.ahk','/out','dist\WhisperPTT.exe','/base','ahk-bin\AutoHotkey64.exe'
+          if (-not (Test-Path dist\WhisperPTT.exe)) { throw 'Ahk2Exe produced no output' }
+
+      - name: Build installer
+        uses: Minionguyjpro/Inno-Setup-Action@v1.2.5
+        with:
+          path: installer/whisper-ptt.iss
+          options: /DAppVersion=${{ steps.ver.outputs.version }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: WhisperPTT-Setup
+          path: installer/Output/*.exe
+
+      - name: Create GitHub release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: installer/Output/*.exe
+          generate_release_notes: true

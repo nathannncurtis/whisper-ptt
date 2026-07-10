@@ -1,0 +1,4 @@
+# Only needed if you pick a model that has no pre-converted OpenVINO IR on the
+# HuggingFace OpenVINO org (openai/whisper-base/small/medium all have one).
+# Pulls in torch — heavy; keep out of the runtime install.
+optimum[openvino]

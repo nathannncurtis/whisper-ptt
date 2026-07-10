@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "whisper-ptt"
+version = "0.1.0"
+description = "Local push-to-talk dictation backend: Whisper on Intel NPU via OpenVINO"
+requires-python = ">=3.10"
+dependencies = [
+    "openvino-genai>=2025.2",
+    "sounddevice>=0.4.6",
+    "numpy",
+    "huggingface_hub",
+]
+
+[project.scripts]
+whisper-ptt = "whisper_ptt.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

@@ -1,0 +1,33 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  smoke:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install
+        run: |
+          pip install -r requirements.txt
+          pip install -e .
+
+      - name: Byte-compile
+        run: python -m compileall src installer scripts
+
+      - name: Smoke test (imports + config parse)
+        run: |
+          python -c "import whisper_ptt.server, whisper_ptt.model_fetch"
+          python -c "from whisper_ptt.config import load; s = load('config.ini'); print(s.model_id, s.device_order)"
+
+      - name: Device probe (informational — runners have no NPU)
+        run: python scripts/probe_devices.py
+        continue-on-error: true
