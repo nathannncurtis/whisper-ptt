@@ -27,6 +27,7 @@ BackendCmd := IniRead(Ini, "backend", "command", "auto")
 LogDir := Root "\" IniRead(Ini, "logging", "dir", "logs")
 
 Recording := false
+Busy := false  ; true while a previous utterance is still being typed
 BackendPid := 0
 IndGui := ""
 
@@ -50,7 +51,7 @@ TrayTip "Hold " HotkeyName " to dictate", "WhisperPTT", "Mute"
 ; ---------- hotkey handlers ----------
 StartDictation(*) {
     global Recording
-    if Recording  ; ignore keyboard auto-repeat while held
+    if (Recording or Busy)  ; auto-repeat, or still typing the last utterance
         return
     Recording := true
     try {
@@ -63,26 +64,66 @@ StartDictation(*) {
 }
 
 StopDictation(*) {
-    global Recording
+    global Recording, Busy
     if !Recording
         return
     Recording := false
+    Busy := true
     ShowIndicator("… transcribing")
-    text := ""
-    try {
-        text := Http("POST", "/stop", 120000)
-    } catch as e {
+    try req := HttpReq("POST", "/stop", 120000)
+    catch as e {
+        Busy := false
         HideIndicator()
         Flash("WhisperPTT: transcription failed — " e.Message)
         return
     }
+    if (req.Status = 200) {
+        ; Short/cleanup-less utterance: final text inline.
+        HideIndicator()
+        ; Newlines would be typed as Enter keypresses (submits chat inputs) —
+        ; the backend already collapses them, this is defense in depth.
+        text := Trim(RegExReplace(req.ResponseText, "[`r`n]+", " "))
+        if (text != "")
+            SendText text
+        else
+            Flash("WhisperPTT: nothing heard (discarded as silence — see logs)")
+    } else if (req.Status = 202) {
+        StreamDeltas()  ; LLM is generating — type words as they arrive
+    } else {
+        HideIndicator()
+        Flash("WhisperPTT: error " req.Status " — " req.ResponseText)
+    }
+    Busy := false
+}
+
+; Poll /delta and type each increment. The cleaned text is generated
+; left-to-right and never revised, so append-only typing is safe.
+StreamDeltas() {
+    typed := false
+    deadline := A_TickCount + 90000
+    while (A_TickCount < deadline) {
+        try r := HttpReq("GET", "/delta", 5000)
+        catch
+            break
+        if (r.Status != 200)
+            break
+        ; Strip CR/LF only — no Trim, interior chunk spacing matters.
+        chunk := RegExReplace(r.ResponseText, "[`r`n]+", " ")
+        if (chunk != "") {
+            if !typed {
+                HideIndicator()  ; words are landing — get out of the way
+                typed := true
+            }
+            SendText chunk
+        }
+        done := "0"
+        try done := r.GetResponseHeader("X-Done")
+        if (done = "1")
+            break
+        Sleep 80
+    }
     HideIndicator()
-    ; Newlines would be typed as Enter keypresses (submits chat inputs) —
-    ; the backend already collapses them, this is defense in depth.
-    text := Trim(RegExReplace(text, "[`r`n]+", " "))
-    if (text != "")
-        SendText text
-    else
+    if !typed
         Flash("WhisperPTT: nothing heard (discarded as silence — see logs)")
 }
 
@@ -148,11 +189,16 @@ Cleanup(reason, code) {
 }
 
 ; ---------- HTTP ----------
-Http(method, path, timeoutMs) {
+HttpReq(method, path, timeoutMs) {
     req := ComObject("WinHttp.WinHttpRequest.5.1")
     req.Open(method, BaseUrl path, false)
     req.SetTimeouts(2000, 2000, 2000, timeoutMs)
     req.Send()
+    return req
+}
+
+Http(method, path, timeoutMs) {
+    req := HttpReq(method, path, timeoutMs)
     if (req.Status != 200)
         throw Error("HTTP " req.Status " " req.ResponseText)
     return req.ResponseText

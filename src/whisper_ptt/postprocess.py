@@ -29,7 +29,17 @@ def _capitalize_first(text: str) -> str:
     return text[:1].upper() + text[1:] if text else text
 
 
+_FILLER_RE = re.compile(r"\b(?:um+|uh+|erm+)\b[,.]?\s*", re.IGNORECASE)
+
+
+def _strip_fillers(text: str) -> str:
+    """Cheap filler removal so short utterances that skip the LLM pass still
+    lose their um/uh. Harmless before the LLM (less for it to do)."""
+    return _FILLER_RE.sub("", text)
+
+
 STEPS: list[Processor] = [
+    _strip_fillers,
     _collapse_whitespace,
     _strip,
     _capitalize_first,

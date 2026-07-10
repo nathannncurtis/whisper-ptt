@@ -62,6 +62,29 @@ def _speech_stats(audio: np.ndarray, sample_rate: int) -> tuple[float, float, fl
     return rms, float(np.percentile(wrms, 95)), float(np.percentile(wrms, 20))
 
 
+class _StreamJob:
+    """Buffer between the cleanup generation thread and /delta polls."""
+
+    def __init__(self):
+        self._chunks: list[str] = []
+        self._done = False
+        self._lock = threading.Lock()
+
+    def emit(self, chunk: str) -> None:
+        with self._lock:
+            self._chunks.append(chunk)
+
+    def finish(self) -> None:
+        with self._lock:
+            self._done = True
+
+    def take(self) -> tuple[str, bool]:
+        with self._lock:
+            delta = "".join(self._chunks)
+            self._chunks.clear()
+            return delta, self._done
+
+
 class _State:
     def __init__(self, settings: Settings, logger: logging.Logger):
         self.settings = settings
@@ -79,6 +102,7 @@ class _State:
         self.partial: tuple[int, str] = (0, "")
         self.partial_stop: threading.Event | None = None
         self.asr_lock = threading.Lock()
+        self.job: _StreamJob | None = None  # in-flight cleanup stream
 
 
 def _partial_worker(state: _State, stop_evt: threading.Event) -> None:
@@ -107,15 +131,30 @@ def _partial_worker(state: _State, stop_evt: threading.Event) -> None:
             break
 
 
+def _cleanup_job(state: _State, job: _StreamJob, text: str) -> None:
+    """Run the LLM cleanup stream, falling back to the raw text on rejection."""
+    try:
+        final = state.cleanup.stream(text, job.emit)
+        if final is None:
+            job.emit(text)
+    except Exception:
+        state.logger.exception("cleanup job failed, emitting raw text")
+        job.emit(text)
+    finally:
+        job.finish()
+
+
 def _make_handler(state: _State, server_ref: dict):
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
 
-        def _reply(self, code: int, body: str = "") -> None:
+        def _reply(self, code: int, body: str = "", headers: dict | None = None) -> None:
             data = body.encode("utf-8")
             self.send_response(code)
             self.send_header("Content-Type", "text/plain; charset=utf-8")
             self.send_header("Content-Length", str(len(data)))
+            for name, value in (headers or {}).items():
+                self.send_header(name, value)
             self.end_headers()
             self.wfile.write(data)
 
@@ -123,6 +162,14 @@ def _make_handler(state: _State, server_ref: dict):
             state.logger.debug("http: " + fmt, *args)
 
         def do_GET(self):
+            if self.path == "/delta":
+                job = state.job
+                if job is None:
+                    return self._reply(404, "no stream in progress")
+                delta, done = job.take()
+                if done:
+                    state.job = None
+                return self._reply(200, delta, {"X-Done": "1" if done else "0"})
             if self.path != "/ping":
                 return self._reply(404, "unknown path")
             if state.status == "ready":
@@ -206,15 +253,30 @@ def _make_handler(state: _State, server_ref: dict):
                         )
                     raw = state.transcriber.transcribe(audio)
             whisper_s = time.perf_counter() - t0
-            text = postprocess.apply(raw)  # cleanup step logs its own timing
-            total_s = time.perf_counter() - t0
+            text = postprocess.apply(raw)
             state.logger.info(
                 "utterance: audio=%.2fs rms=%.4f peak=%.4f floor=%.4f "
-                "whisper=%.2fs total=%.2fs rtf=%.2f device=%s chars=%d",
-                audio_s, rms, peak, floor, whisper_s, total_s,
-                whisper_s / audio_s, state.transcriber.device, len(text),
+                "whisper=%.2fs device=%s chars=%d",
+                audio_s, rms, peak, floor, whisper_s,
+                state.transcriber.device, len(text),
             )
-            self._reply(200, text)
+
+            # Short or cleanup-less utterances: reply inline (status 200).
+            # Otherwise: 202 + a background LLM stream the client polls via
+            # /delta, typing words as they are generated.
+            if (
+                state.cleanup is None
+                or not text
+                or len(text.split()) < state.settings.cleanup_min_words
+            ):
+                return self._reply(200, text)
+
+            job = _StreamJob()
+            state.job = job
+            threading.Thread(
+                target=_cleanup_job, args=(state, job, text), daemon=True
+            ).start()
+            self._reply(202, "streaming; poll /delta")
 
         def _cancel(self):
             with state.lock:
@@ -267,7 +329,6 @@ def run(settings: Settings, logger: logging.Logger) -> None:
                     settings.cleanup_max_new_tokens,
                     logger,
                 )
-                postprocess.STEPS.append(state.cleanup)
             except Exception:
                 logger.exception("cleanup pass disabled (failed to initialize)")
 

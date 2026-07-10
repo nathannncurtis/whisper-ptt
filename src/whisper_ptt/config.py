@@ -25,6 +25,7 @@ class Settings:
     cleanup_model_id: str
     cleanup_device_order: tuple[str, ...]
     cleanup_max_new_tokens: int
+    cleanup_min_words: int
 
     @property
     def model_dir(self) -> Path:
@@ -74,4 +75,5 @@ def load(config_path: str | Path = "config.ini") -> Settings:
         ).strip(),
         cleanup_device_order=parse_order("cleanup", "NPU, CPU"),
         cleanup_max_new_tokens=cp.getint("cleanup", "max_new_tokens", fallback=256),
+        cleanup_min_words=cp.getint("cleanup", "min_words", fallback=5),
     )
