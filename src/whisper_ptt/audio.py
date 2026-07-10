@@ -40,6 +40,14 @@ class Recorder:
         )
         self._stream.start()
 
+    def snapshot(self) -> np.ndarray:
+        """Copy of everything recorded so far, without stopping the stream.
+        Used by the live-transcription worker while recording continues."""
+        with self._lock:
+            if not self._chunks:
+                return np.zeros(0, dtype=np.float32)
+            return np.concatenate(self._chunks)
+
     def stop(self) -> np.ndarray:
         """Stop capture and return the recorded audio as 1-D float32."""
         if self._stream is None:

@@ -39,6 +39,15 @@ MIN_AUDIO_SECONDS = 0.2
 # 20th-pct window. All three numbers are logged per utterance for tuning.
 PEAK_OVER_FLOOR = 2.0
 
+# Live transcription: while recording, a worker re-transcribes the growing
+# audio every PARTIAL_INTERVAL seconds so that on key-release there is little
+# left to do. If the cached pass covers all but PARTIAL_REUSE_TAIL_S of the
+# final audio (i.e. only trailing silence arrived since), the final Whisper
+# run is skipped entirely and we go straight to postprocess/cleanup.
+PARTIAL_INTERVAL = 1.5
+PARTIAL_MIN_NEW_S = 0.5  # don't re-run for less than this much new audio
+PARTIAL_REUSE_TAIL_S = 0.6
+
 
 def _speech_stats(audio: np.ndarray, sample_rate: int) -> tuple[float, float, float]:
     """(overall RMS, 95th-pct window RMS, 20th-pct window RMS), 100ms windows."""
@@ -64,6 +73,38 @@ class _State:
         self.cleanup = None  # CleanupPass when [cleanup] enabled
         self.media = None  # MediaPauser when [media] pause_on_record
         self.lock = threading.Lock()
+        # Live-transcription state: (samples_covered, text) of the newest
+        # background pass; asr_lock serializes Whisper between the worker and
+        # the /stop handler.
+        self.partial: tuple[int, str] = (0, "")
+        self.partial_stop: threading.Event | None = None
+        self.asr_lock = threading.Lock()
+
+
+def _partial_worker(state: _State, stop_evt: threading.Event) -> None:
+    sample_rate = state.settings.sample_rate
+    last_n = 0
+    while not stop_evt.wait(PARTIAL_INTERVAL):
+        recorder = state.recorder
+        if recorder is None or not recorder.recording:
+            break
+        audio = recorder.snapshot()
+        if (len(audio) - last_n) / sample_rate < PARTIAL_MIN_NEW_S:
+            continue
+        try:
+            with state.asr_lock:
+                if stop_evt.is_set():  # /stop won the lock race — its job now
+                    break
+                text = state.transcriber.transcribe(audio)
+            state.partial = (len(audio), text)
+            last_n = len(audio)
+            state.logger.debug(
+                "live: %.1fs transcribed in background -> %d chars",
+                len(audio) / sample_rate, len(text),
+            )
+        except Exception:
+            state.logger.exception("live transcription pass failed")
+            break
 
 
 def _make_handler(state: _State, server_ref: dict):
@@ -117,6 +158,13 @@ def _make_handler(state: _State, server_ref: dict):
                     if state.media is not None:
                         state.media.pause_playing()
                     state.recorder.start()
+                    state.partial = (0, "")
+                    state.partial_stop = threading.Event()
+                    threading.Thread(
+                        target=_partial_worker,
+                        args=(state, state.partial_stop),
+                        daemon=True,
+                    ).start()
             self._reply(200, "recording")
 
         def _stop(self):
@@ -125,6 +173,8 @@ def _make_handler(state: _State, server_ref: dict):
             with state.lock:
                 if not state.recorder.recording:
                     return self._reply(409, "not recording")
+                if state.partial_stop is not None:
+                    state.partial_stop.set()
                 audio = state.recorder.stop()
                 # Mic is closed — music can come back while we transcribe.
                 if state.media is not None:
@@ -143,7 +193,18 @@ def _make_handler(state: _State, server_ref: dict):
                 return self._reply(200, "")
 
             t0 = time.perf_counter()
-            raw = state.transcriber.transcribe(audio)
+            with state.asr_lock:  # waits out any in-flight background pass
+                n_cached, cached = state.partial
+                tail_s = (len(audio) - n_cached) / state.settings.sample_rate
+                if cached and tail_s <= PARTIAL_REUSE_TAIL_S:
+                    state.logger.info("live transcript reused (tail=%.2fs)", tail_s)
+                    raw = cached
+                else:
+                    if n_cached:
+                        state.logger.info(
+                            "live transcript stale (tail=%.2fs), full pass", tail_s
+                        )
+                    raw = state.transcriber.transcribe(audio)
             whisper_s = time.perf_counter() - t0
             text = postprocess.apply(raw)  # cleanup step logs its own timing
             total_s = time.perf_counter() - t0
@@ -157,6 +218,8 @@ def _make_handler(state: _State, server_ref: dict):
 
         def _cancel(self):
             with state.lock:
+                if state.partial_stop is not None:
+                    state.partial_stop.set()
                 if state.recorder is not None:
                     state.recorder.cancel()
                 if state.media is not None:
