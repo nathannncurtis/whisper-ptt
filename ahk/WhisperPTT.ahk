@@ -56,7 +56,7 @@ StartDictation(*) {
     Recording := true
     try {
         Http("POST", "/start", 3000)
-        ShowIndicator("● REC")
+        WaveShow("rec")
     } catch as e {
         Recording := false
         Flash("WhisperPTT: backend not ready — " e.Message)
@@ -69,17 +69,17 @@ StopDictation(*) {
         return
     Recording := false
     Busy := true
-    ShowIndicator("… transcribing")
+    WaveShow("proc")
     try req := HttpReq("POST", "/stop", 120000)
     catch as e {
         Busy := false
-        HideIndicator()
+        WaveHide()
         Flash("WhisperPTT: transcription failed — " e.Message)
         return
     }
     if (req.Status = 200) {
         ; Short/cleanup-less utterance: final text inline.
-        HideIndicator()
+        WaveHide()
         ; Newlines would be typed as Enter keypresses (submits chat inputs) —
         ; the backend already collapses them, this is defense in depth.
         text := Trim(RegExReplace(req.ResponseText, "[`r`n]+", " "))
@@ -90,7 +90,7 @@ StopDictation(*) {
     } else if (req.Status = 202) {
         StreamDeltas()  ; LLM is generating — type words as they arrive
     } else {
-        HideIndicator()
+        WaveHide()
         Flash("WhisperPTT: error " req.Status " — " req.ResponseText)
     }
     Busy := false
@@ -111,7 +111,7 @@ StreamDeltas() {
         chunk := RegExReplace(r.ResponseText, "[`r`n]+", " ")
         if (chunk != "") {
             if !typed {
-                HideIndicator()  ; words are landing — get out of the way
+                WaveHide()  ; words are landing — get out of the way
                 typed := true
             }
             SendText chunk
@@ -122,7 +122,7 @@ StreamDeltas() {
             break
         Sleep 80
     }
-    HideIndicator()
+    WaveHide()
     if !typed
         Flash("WhisperPTT: nothing heard (discarded as silence — see logs)")
 }
@@ -219,9 +219,7 @@ PingStatus(&body := "") {
     }
 }
 
-; ---------- indicator ----------
-; Small always-on-top pill, bottom-center. WS_EX_NOACTIVATE so it never steals
-; focus from the window receiving the dictated text.
+; ---------- status text indicator (backend startup messages only) ----------
 ShowIndicator(text) {
     global IndGui
     if !IsObject(IndGui) {
@@ -241,6 +239,134 @@ HideIndicator() {
     global IndGui
     if IsObject(IndGui)
         IndGui.Hide()
+}
+
+; ---------- waveform overlay (recording / transcribing) ----------
+; Wispr-Flow-inspired but quieter: a small translucent pill, bottom-center,
+; with capsule bars that move with the actual mic level (GET /level) while
+; recording, and settle into a gentle cool-toned idle wave while the LLM
+; works. GDI+ layered window: per-pixel alpha, no chrome, never activates.
+global Wave := {hwnd: 0, gui: 0, w: 168, h: 34, mode: "", level: 0.0, smooth: 0.0, t: 0.0,
+    hdc: 0, hbm: 0, obm: 0, gfx: 0, token: 0}
+
+WaveShow(mode) {
+    global Wave
+    if !Wave.hwnd
+        WaveInit()
+    Wave.mode := mode
+    if (mode = "rec")
+        Wave.smooth := 0.0
+    x := (A_ScreenWidth - Wave.w) // 2
+    y := A_ScreenHeight - Wave.h - 76
+    ; HWND_TOPMOST, SWP_NOACTIVATE | SWP_SHOWWINDOW
+    DllCall("SetWindowPos", "Ptr", Wave.hwnd, "Ptr", -1,
+        "Int", x, "Int", y, "Int", Wave.w, "Int", Wave.h, "UInt", 0x50)
+    SetTimer WaveFrame, 40
+    WaveFrame()
+}
+
+WaveHide() {
+    global Wave
+    SetTimer WaveFrame, 0
+    if Wave.hwnd
+        DllCall("ShowWindow", "Ptr", Wave.hwnd, "Int", 0)  ; SW_HIDE
+}
+
+WaveInit() {
+    global Wave
+    g := Gui("+AlwaysOnTop -Caption +ToolWindow +E0x80000 +E0x08000000")  ; layered + noactivate
+    g.Show("NA x0 y0 w" Wave.w " h" Wave.h)
+    DllCall("ShowWindow", "Ptr", g.Hwnd, "Int", 0)
+    Wave.gui := g
+    Wave.hwnd := g.Hwnd
+    si := Buffer(24, 0)
+    NumPut("UInt", 1, si)
+    token := 0
+    DllCall("gdiplus\GdiplusStartup", "Ptr*", &token, "Ptr", si, "Ptr", 0)
+    Wave.token := token
+    bi := Buffer(40, 0)
+    NumPut("UInt", 40, bi, 0)
+    NumPut("Int", Wave.w, bi, 4)
+    NumPut("Int", -Wave.h, bi, 8)   ; top-down DIB
+    NumPut("UShort", 1, bi, 12)
+    NumPut("UShort", 32, bi, 14)
+    bits := 0
+    Wave.hbm := DllCall("CreateDIBSection", "Ptr", 0, "Ptr", bi, "UInt", 0, "Ptr*", &bits, "Ptr", 0, "UInt", 0, "Ptr")
+    Wave.hdc := DllCall("CreateCompatibleDC", "Ptr", 0, "Ptr")
+    Wave.obm := DllCall("SelectObject", "Ptr", Wave.hdc, "Ptr", Wave.hbm, "Ptr")
+    gfx := 0
+    DllCall("gdiplus\GdipCreateFromHDC", "Ptr", Wave.hdc, "Ptr*", &gfx)
+    Wave.gfx := gfx
+    DllCall("gdiplus\GdipSetSmoothingMode", "Ptr", gfx, "Int", 4)  ; antialias
+}
+
+WaveFrame() {
+    global Wave
+    static n := 0
+    Wave.t += 0.04
+    n += 1
+    if (Wave.mode = "rec" && Mod(n, 3) = 0) {  ; poll mic level ~every 120ms
+        try Wave.level := Number(Http("GET", "/level", 1000))
+        catch
+            Wave.level := 0.0
+    }
+    ; Map mic RMS to 0..1 (speech on this mic peaks ~0.02); idle wave for LLM.
+    target := (Wave.mode = "rec") ? Min(1.0, Wave.level / 0.02) : 0.30
+    Wave.smooth += (target - Wave.smooth) * 0.30
+    WaveDraw()
+}
+
+WaveDraw() {
+    global Wave
+    gfx := Wave.gfx
+    DllCall("gdiplus\GdipGraphicsClear", "Ptr", gfx, "UInt", 0x00000000)
+    WaveRoundFill(gfx, 0, 0, Wave.w, Wave.h, Wave.h / 2, 0xB414141A)  ; translucent dark pill
+    barCount := 9
+    barW := 4.0
+    gap := 8.0
+    span := barCount * barW + (barCount - 1) * gap
+    x0 := (Wave.w - span) / 2
+    cy := Wave.h / 2
+    maxH := Wave.h - 12
+    color := (Wave.mode = "rec") ? 0xFFFF7A66 : 0xFF9AA8FF  ; warm coral / cool idle
+    loop barCount {
+        i := A_Index - 1
+        ; two incommensurate sines per bar -> organic, non-repeating motion
+        ph := Wave.t * 6.5 + i * 0.85
+        pulse := (Sin(ph) + Sin(ph * 0.57 + 1.9)) * 0.25 + 0.5
+        h := 4 + (maxH - 4) * pulse * Wave.smooth
+        h := Min(maxH, Max(4, h))
+        WaveRoundFill(gfx, x0 + i * (barW + gap), cy - h / 2, barW, h, barW / 2, color)
+    }
+    ; present via UpdateLayeredWindow (per-pixel alpha)
+    size := Buffer(8, 0)
+    NumPut("Int", Wave.w, size, 0)
+    NumPut("Int", Wave.h, size, 4)
+    srcPt := Buffer(8, 0)
+    blend := Buffer(4, 0)
+    NumPut("UChar", 0, blend, 0)    ; AC_SRC_OVER
+    NumPut("UChar", 0, blend, 1)
+    NumPut("UChar", 255, blend, 2)  ; constant alpha
+    NumPut("UChar", 1, blend, 3)    ; AC_SRC_ALPHA
+    DllCall("UpdateLayeredWindow", "Ptr", Wave.hwnd, "Ptr", 0, "Ptr", 0, "Ptr", size,
+        "Ptr", Wave.hdc, "Ptr", srcPt, "UInt", 0, "Ptr", blend, "UInt", 2)  ; ULW_ALPHA
+}
+
+; Filled rounded rectangle (capsule when r = h/2 or w/2).
+WaveRoundFill(gfx, x, y, w, h, r, argb) {
+    path := 0
+    DllCall("gdiplus\GdipCreatePath", "Int", 0, "Ptr*", &path)
+    d := r * 2
+    DllCall("gdiplus\GdipAddPathArc", "Ptr", path, "Float", x, "Float", y, "Float", d, "Float", d, "Float", 180, "Float", 90)
+    DllCall("gdiplus\GdipAddPathArc", "Ptr", path, "Float", x + w - d, "Float", y, "Float", d, "Float", d, "Float", 270, "Float", 90)
+    DllCall("gdiplus\GdipAddPathArc", "Ptr", path, "Float", x + w - d, "Float", y + h - d, "Float", d, "Float", d, "Float", 0, "Float", 90)
+    DllCall("gdiplus\GdipAddPathArc", "Ptr", path, "Float", x, "Float", y + h - d, "Float", d, "Float", d, "Float", 90, "Float", 90)
+    DllCall("gdiplus\GdipClosePathFigure", "Ptr", path)
+    brush := 0
+    DllCall("gdiplus\GdipCreateSolidFill", "UInt", argb, "Ptr*", &brush)
+    DllCall("gdiplus\GdipFillPath", "Ptr", gfx, "Ptr", brush, "Ptr", path)
+    DllCall("gdiplus\GdipDeleteBrush", "Ptr", brush)
+    DllCall("gdiplus\GdipDeletePath", "Ptr", path)
 }
 
 Flash(msg) {

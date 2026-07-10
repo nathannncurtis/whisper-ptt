@@ -162,6 +162,11 @@ def _make_handler(state: _State, server_ref: dict):
             state.logger.debug("http: " + fmt, *args)
 
         def do_GET(self):
+            if self.path == "/level":
+                # Live mic RMS for the recording indicator's waveform.
+                rec = state.recorder
+                level = rec.level if (rec is not None and rec.recording) else 0.0
+                return self._reply(200, f"{level:.5f}")
             if self.path == "/delta":
                 job = state.job
                 if job is None:

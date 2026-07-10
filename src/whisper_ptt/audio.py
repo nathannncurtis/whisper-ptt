@@ -17,6 +17,7 @@ class Recorder:
         self._stream: sd.InputStream | None = None
         self._chunks: list[np.ndarray] = []
         self._lock = threading.Lock()
+        self.level = 0.0  # RMS of the most recent callback chunk (for the UI)
 
     @property
     def recording(self) -> bool:
@@ -28,8 +29,10 @@ class Recorder:
         self._chunks = []
 
         def callback(indata, frames, time_info, status):
+            mono = indata[:, 0]
+            self.level = float(np.sqrt(np.mean(np.square(mono))))
             with self._lock:
-                self._chunks.append(indata[:, 0].copy())
+                self._chunks.append(mono.copy())
 
         self._stream = sd.InputStream(
             samplerate=self.sample_rate,
@@ -55,6 +58,7 @@ class Recorder:
         self._stream.stop()
         self._stream.close()
         self._stream = None
+        self.level = 0.0
         with self._lock:
             chunks, self._chunks = self._chunks, []
         if not chunks:
