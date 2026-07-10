@@ -8,6 +8,7 @@ LLM cleanup pass can be appended (or inserted) without touching callers:
 
 from __future__ import annotations
 
+import re
 from typing import Callable
 
 Processor = Callable[[str], str]
@@ -17,11 +18,19 @@ def _strip(text: str) -> str:
     return text.strip()
 
 
+def _collapse_whitespace(text: str) -> str:
+    """Newlines/tabs -> single spaces. Critical: the AHK side types the text
+    with SendText, where a newline is an Enter keypress — which submits chat
+    inputs. Speech transcripts never legitimately contain newlines."""
+    return re.sub(r"\s+", " ", text)
+
+
 def _capitalize_first(text: str) -> str:
     return text[:1].upper() + text[1:] if text else text
 
 
 STEPS: list[Processor] = [
+    _collapse_whitespace,
     _strip,
     _capitalize_first,
 ]

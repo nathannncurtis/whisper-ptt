@@ -77,6 +77,9 @@ StopDictation(*) {
         return
     }
     HideIndicator()
+    ; Newlines would be typed as Enter keypresses (submits chat inputs) —
+    ; the backend already collapses them, this is defense in depth.
+    text := Trim(RegExReplace(text, "[`r`n]+", " "))
     if (text != "")
         SendText text
     else
